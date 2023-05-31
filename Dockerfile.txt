@@ -1,0 +1,11 @@
+FROM ubuntu:latest
+
+# Install required packages
+RUN apt-get update && \
+    apt-get install -y ansible
+
+# Copy Ansible playbook
+COPY deploy_wordpress.yml /deploy_wordpress.yml
+
+# Run Ansible playbook
+CMD ["ansible-playbook", "/deploy_wordpress.yml"]

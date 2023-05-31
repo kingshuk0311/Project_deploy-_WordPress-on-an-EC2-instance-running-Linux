@@ -1,0 +1,120 @@
+---
+- name: Deploy WordPress on EC2
+  hosts: localhost
+  gather_facts: False
+  vars:
+    region: "us-west-2"
+    instance_type: "t2.micro"
+    security_group: "Wordpress_security_group"
+    key_pair: "wordpress.pem"
+    ami: "ami-0123456789abcdef"  
+    subnet_id: "subnet-01234567890abcdef"
+    elb_name: "Wordpress elb"
+    elb_security_group: "Wordpress_elb_security_group"
+    elb_subnets: "subnet-52234567890abcdef,subnet-52234567891abcdek"
+    vpc_id: "vpc-01234567890abcdef"
+
+  tasks:
+    - name: Provision EC2 Instance
+      ec2:
+        region: "{{ region }}"
+        instance_type: "{{ instance_type }}"
+        security_group: "{{ security_group }}"
+        key_name: "{{ key_pair }}"
+        image: "{{ ami }}"
+        subnet_id: "{{ subnet_id }}"
+        assign_public_ip: yes
+        wait: true
+        count: 1
+        instance_tags:
+          Name: WordPress Instance
+      register: ec2_instance
+
+    - name: Wait for SSH to be available
+      wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22
+        delay: 10
+        timeout: 120
+      with_items: "{{ ec2_instance.instances }}"
+
+    - name: Add EC2 instance to dynamic inventory
+      add_host:
+        hostname: "{{ item.public_ip }}"
+        groups: ec2_instances
+      with_items: "{{ ec2_instance.instances }}"
+
+    - name: Configure the EC2 instance
+      hosts: ec2_instances
+      remote_user: ec2-user
+      gather_facts: True
+      tasks:
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+          become: true
+
+        - name: Install required packages
+          apt:
+            name: "{{ item }}"
+            state: present
+          become: true
+          with_items:
+            - apache2
+            - php
+            - mysql-server
+            - libapache2-mod-php
+            - php-mysql
+
+        - name: Start Apache service
+          service:
+            name: apache2
+            state: started
+          become: true
+
+        - name: Download and extract WordPress
+          unarchive:
+            src: "https://wordpress.org/latest.tar.gz"
+            dest: "/var/www/html/"
+            remote_src: yes
+            owner: root
+            group: root
+
+        - name: Configure WordPress database
+          command: wp core config --dbname=wordpress --dbuser=root --dbpass=king@9234 --dbhost=localhost --dbprefix=wp_ --allow-root
+          args:
+            chdir: "/var/www/html/wordpress"
+          become: true
+
+        - name: Create WordPress database
+          command: wp db create --allow-root
+          args:
+            chdir: "/var/www/html/wordpress"
+          become: true
+
+        - name: Set WordPress file permissions
+          file:
+            path: "/var/www/html/wordpress"
+            state: directory
+            recurse: yes
+            owner: apache
+            group: apache
+            mode: '0755'
+          become: true
+
+        - name: Configure Apache virtual host
+          template:
+            src: "templates/wordpress.conf.j2"
+            dest: "/etc/apache2/sites-available/wordpress.conf"
+          become: true
+
+        - name: Enable Apache virtual host
+          apache2_module
+          
+        - name: Add a random post to WordPress every hour
+          cron:
+            name: "docker exec -it wordpress_container wp post create --post_title='{{ ansible_date_time.iso8601 }}' --post_content='{{ lookup(''King@8709'', '/dev/null length=24 chars=ascii_letters,digits'') }}'"
+            minute: "0"
+            hour: "*"
+            user: "root"
+            job: "true"
